@@ -31,8 +31,33 @@ SOURCES = {
     'Interpark / NOL': ['https://nol.yanolja.com/ticket/display/ranking/concert'],
     'Melon Ticket': ['https://ticket.melon.com/main/index.htm'],
 }
-# Only links pointing to official event/listing pages are retained; no XHS/X login scraping.
-LINK_SIGNALS = re.compile(r'concert|performance|event|activity|ticket|show|product|prodid|공연|콘서트|演唱|音樂|음악', re.I)
+# Conservative event-detail URL patterns. Generic home/category/search pages must
+# never become an event candidate, even if their text contains "concert".
+DETAIL_PATHS = {
+    'Ticketmaster SG': re.compile(r'^/activity/detail/[a-z0-9_-]+/?$', re.I),
+    'Ticketmaster AU': re.compile(r'^/(?:event/[^/]+|[^/]+/event/[0-9A-Za-z]+|[^/]+-tickets/[^/]+/event/[0-9A-Za-z]+|[^/]+-tickets/artist/\d+)/?$', re.I),
+    'ThaiTicketMajor': re.compile(r'^/(?:concert|performance)/[a-z0-9][a-z0-9_-]*\.html$', re.I),
+    'HK Ticketing': re.compile(r'^/(?:hant|eng|en)/(?:allEvents|events)/detail/(?:[^/?]+)', re.I),
+    'Cityline': re.compile(r'^/(?:tc|en|sc|zh|hk)/20\d\d/[^/]+\.html$', re.I),
+    'Interpark / NOL': re.compile(r'^/ticket/products/\d+/?$', re.I),
+    'Melon Ticket': re.compile(r'^/performance/index\.htm$', re.I),
+}
+NAV_LABELS = re.compile(r'^(concerts?|events?|tickets?|performances?|music|shows?|latest|all events|view all|more|details?|buy tickets?|book now|演唱会|演唱會|音乐|音樂|票务|票務|更多|全部|공연|콘서트|예매|전체|詳細|詳情)$', re.I)
+BAD_LABEL = re.compile(r'home\s*page|首页|首頁|分類|分类|search|signin|login|register|FAQ|privacy|terms|cookie|help|about us|accessibility', re.I)
+# Avoid trusting URL keywords as evidence of a concert.
+PERFORMANCE_HINT = re.compile(r'concert|world tour|live(?:\s+in|\s+tour|\s+20\d\d)|fanmeeting|fan meeting|showcase|recital|演唱会|演唱會|音乐会|音樂會|巡演|演奏会|공연|콘서트|팬미팅|라이브|ทัวร์|คอนเสิร์ต', re.I)
+
+def is_detail_url(platform, final):
+    parsed = urlparse(final)
+    if not DETAIL_PATHS[platform].fullmatch(parsed.path):
+        return False
+    if platform == 'Melon Ticket':
+        return bool(re.search(r'(?:^|&)prodId=\d+(?:&|$)', parsed.query, re.I))
+    return True
+
+def candidate_title(raw):
+    title = re.sub(r'\s+', ' ', raw).strip(' -|\u2022\u00b7')
+    return title if 9 <= len(title) <= 160 and not NAV_LABELS.fullmatch(title) and not BAD_LABEL.search(title) else None
 
 def parse_time(value):
     try:
@@ -82,6 +107,7 @@ def candidate_pages():
     rows, statuses = [], {}
     for platform, urls in SOURCES.items():
         successes, problems, seen = 0, [], set()
+        found = []
         for url in urls:
             try:
                 html = retrieve(url)
@@ -89,28 +115,49 @@ def candidate_pages():
                 page.feed(html)
                 successes += 1
                 origin_host = urlparse(url).hostname or ''
-                added = 0
-                for href, title in page.links:
-                    final = urljoin(url, href)
+                for href, label in page.links:
+                    final = urljoin(url, href).split('#', 1)[0]
                     parsed = urlparse(final)
-                    # Keep only same host or subdomains thereof, ordinary web pages.
                     if parsed.scheme != 'https' or not parsed.hostname or not (parsed.hostname == origin_host or parsed.hostname.endswith('.'+origin_host) or origin_host.endswith('.'+parsed.hostname)):
                         continue
-                    if not LINK_SIGNALS.search(final+' '+title): continue
-                    if final in seen or final.rstrip('/') == url.rstrip('/'): continue
-                    if not title or len(title) < 5 or len(title) > 220: continue
+                    if not is_detail_url(platform, final):
+                        continue
+                    if final in seen:
+                        continue
                     seen.add(final)
-                    rows.append({'platform': platform, 'title': title[:160], 'url': final, 'source_page': url, 'discovered_at': stamp(NOW), 'verification_status': '未核实首次预售时间'})
-                    added += 1
-                    if added >= 24: break
+                    # A detail URL alone isn't sufficient; verify the target HTML.
+                    found.append((final, label, url))
             except Exception as exc:
                 problems.append(f'{type(exc).__name__}: {str(exc)[:65]}')
             time.sleep(0.3)
+        validated = 0
+        # Limit request volume per domain; be polite to public ticketing sites.
+        for final, link_label, directory in found[:12]:
+            try:
+                html = retrieve(final)
+                page = PageLinks()
+                page.feed(html)
+                html_title = re.sub(r'\s+', ' ', page.page_title).strip()
+                title = candidate_title(link_label) or candidate_title(re.sub(r'\s*[-|]\s*(?:Ticketmaster|ThaiTicketMajor|Cityline|Melon Ticket|Interpark|NOL).*$', '', html_title, flags=re.I))
+                if not title:
+                    continue
+                # At least one human-readable text field must indicate a show.
+                if not PERFORMANCE_HINT.search(title + ' ' + html_title):
+                    continue
+                # Explicitly reject common portals/categories even if templates mention tours.
+                if BAD_LABEL.search(title):
+                    continue
+                rows.append({'platform': platform, 'title': title, 'url': final, 'source_page': directory, 'discovered_at': stamp(NOW), 'verification_status': '演出详情页已识别；首次预售时间仍待核实'})
+                validated += 1
+            except Exception as exc:
+                problems.append(f'详情页: {type(exc).__name__}')
+            time.sleep(0.3)
         if successes:
-            statuses[platform] = f'网页读取成功 {successes}/{len(urls)}；候选必须核实开票时间' + ('；部分页面失败' if problems else '')
+            statuses[platform] = f'目录读取 {successes}/{len(urls)}；识别具体演出详情 {validated} 条' + ('；部分页面不可访问' if problems else '')
         else:
-            statuses[platform] = f'网页抓取失败（{problems[0] if problems else "未知原因"}）；不能断言暂无演出'
-    return rows[:140], statuses
+            statuses[platform] = f'网页读取失败（{problems[0] if problems else "未知原因"}）；不能断言暂无演出'
+    # Newly discovered candidates are NOT certified as never-on-sale.
+    return rows[:90], statuses
 
 def verified_records():
     try:
@@ -138,7 +185,7 @@ def main():
         'candidates': candidates,
         'coverage': coverage,
         'rejected_verified': len(rejected),
-        'note': '候选列表可能包含已售票、非演唱会或重复项目。正式榜单仅显示7天内人工复核且首次开票时间尚未到来的记录。'
+        'note': '候选已限定具体演出详情页且检查标题，但仍可能已开票；正式榜单仅显示7天内人工复核且首次开票尚未开始的记录。'
     }
     OUTPUT.write_text(json.dumps(result, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     print(f'Published {len(events)} verified upcoming first onsales; {len(candidates)} unverified webpage candidates')
