@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-11-08T08:00:00Z",
+  "policy": "Public HTML only. First presale manually verified.",
+  "events": [],
+  "candidates": [],
+  "coverage": {
+    "Ticketmaster SG": "等待首次网页扫描（无需API）",
+    "Ticketmaster AU": "等待首次网页扫描（无需API）",
+    "ThaiTicketMajor": "等待首次网页扫描（无需API）",
+    "HK Ticketing": "等待首次网页扫描（无需API）",
+    "Cityline": "等待首次网页扫描（无需API）",
+    "Interpark / NOL": "等待首次网页扫描（无需API）",
+    "Melon Ticket": "等待首次网页扫描（无需API）"
+  }
+}

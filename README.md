@@ -1,62 +1,57 @@
-# OPENING RADAR · 七平台未开票演出监测网页
+# Opening Radar — 纯网页检索版（无需 API Key）
 
-一个可直接部署到 GitHub Pages 的静态响应式网页，附每日数据更新脚本与 GitHub Actions 工作流。
+监测七个平台公开网页，关注**未来 90 天内尚未开始第一次预售**的演唱会。部署在 GitHub Pages，通过 GitHub Actions 每天自动尝试扫描。
 
-## 包含的功能
+## 一、部署
 
-- 仅列出首次预售/公开发售**未来才开始**且有官方可验证来源的演出。
-- 首次开票时间在**未来90天**内，演出时间不必在90天内（避免错过早期开票）。
-- 按平台、艺人关键词筛选；支持开票时间/演出日期排序、CSV 导出。
-- 每场提供官方页面、X 与小红书搜索入口；**不捏造社媒互动数字**。
-- 另列 Google News RSS 发现的候选线索（不进入正式榜单）。
-- 官方 API 自动接入 Ticketmaster AU；其他六个平台需人工核实或额外获得合法数据接口。
+1. 创建一个 GitHub 公共仓库 `opening-radar`。
+2. 将本压缩包解压后，直接将所有文件和文件夹放在仓库根目录（主页必须是 `index.html`）。
+3. Settings → Pages → Deploy from a branch → main → `/ (root)` → Save。
+4. Settings → Actions → General → Workflow permissions → `Read and write permissions`。
+5. Actions → **Daily public-webpage concert scan** → Run workflow。之后每天约新加坡时间 09:15 自动尝试运行（GitHub 定时可能延迟）。
 
-## 五步部署（无需服务器）
+**无需申请或配置任何 API Key，也不需要安装 Python 第三方依赖。**
 
-1. 创建一个 GitHub 仓库，上传这个 ZIP 解压后的**所有文件**，确保 `.github/workflows/daily.yml` 一并上传。
-2. GitHub 仓库 **Settings → Pages → Build and deployment → Deploy from a branch → main → / (root)** → Save。
-3. 在 [Ticketmaster Developer](https://developer.ticketmaster.com/) 申请 Discovery API Key。
-4. 仓库 **Settings → Secrets and variables → Actions → New repository secret**，名称填 `TICKETMASTER_API_KEY`，值填你自己的 API Key。
-5. **Actions → Daily concert onsale refresh → Run workflow** 手动运行第一次；之后会每日大约新加坡时间 09:15 触发，GitHub 可能延迟。
+## 二、已实现及限制
 
-访问地址通常是 `https://你的GitHub用户名.github.io/仓库名/`。
+- `scripts/update.py` 每天用 HTTP 请求读取七个平台公开活动目录的 HTML，提取可能相关的演出链接。
+- 网页线索写到 `data/events.json` 的 `candidates`：**并不代表该场未开票**。目录含广告、非演唱会、已售项目，需核实。
+- 若网页需要 JavaScript 渲染、登录或触发 403/429，标记抓取失败，不绕过访问控制，也不伪造成功。
+- 官方开票信息经过核查后，可以录入 `data/verified_events.json`。仅满足「首次预售时间在未来90天，且验证时间在最近7天内」的活动进入正式榜。
+- 首次预售一旦开始，即使普通公开开票还没开始，也会被自动剔除。
+- X 与小红书仅提供关键词搜索入口；无法合法稳定获得完整互动数据时，热度排名留空。
+- 网站是 GitHub Pages 静态站点，自动抓取运行于 GitHub Actions（而非用户浏览器）。
 
-> GitHub Actions 任务要能 push 到 main：Settings → Actions → General → Workflow permissions → Read and write permissions。若分支受保护，需要改用 PR 工作流。
+## 三、手动添加经过核实的未售演出
 
-## 如何录入其他六个平台
-
-编辑 `data/verified_events.json`：
+在 `data/verified_events.json` 写入如下对象数组（日期为示例，**不是实际演出**）：
 
 ```json
 [
   {
-    "id": "sample-unique-id",
-    "platform": "Cityline",
-    "artist": "示例艺人（请替换）",
-    "title": "示例演唱会（请替换）",
-    "country": "Hong Kong",
-    "timezone": "Asia/Hong_Kong",
-    "first_sale_utc": "2027-01-03T02:00:00Z",
-    "event_date_utc": "2027-05-18T12:00:00Z",
-    "official_url": "https://www.cityline.com/",
+    "id": "example-001",
+    "platform": "Ticketmaster SG",
+    "artist": "示例艺人",
+    "title": "示例演唱会",
+    "country": "Singapore",
+    "timezone": "Asia/Singapore",
+    "first_sale_utc": "2027-01-01T02:00:00Z",
+    "event_date_utc": "2027-03-01T12:00:00Z",
+    "official_url": "https://ticketmaster.sg/",
     "verified": true,
-    "verification": "官方公告，已核查全部会员/公开预售",
-    "verified_at": "2027-01-01",
+    "verification": "人工查阅官方公告，确认首次会员预售时间与链接",
+    "verified_at": "2026-12-31",
     "social_score": null
   }
 ]
 ```
 
-上面只是**格式示例，不是真实项目**。仅在验证首场预售尚未发生后才设 `verified: true`；所有时间必须 ISO UTC 带 Z，并填实际当地时区。
+请使用真实官方详情 URL、真实时间和当天日期。填写后运行 GitHub Actions；日期超过7天未经重新复核，系统会把活动从正式榜单撤下。不要仅用“公开开售时间在未来”推断“从未预售”。
 
-**重要**：录入的人工核实记录，`verified_at` 超过7天会自动退出正式列表，必须重新核实后更新日期。Ticketmaster API 不保证记录所有私密预售：因此 API 上尚未开票也只能代表“按 API 可见信息尚未开票”，需自行复核艺人会员公告。
+## 四、常见故障
 
-## 更新数据的限制
-
-- **Ticketmaster SG**：Discovery API 未保证覆盖，不能假设 AU API 会包含新加坡。
-- **ThaiTicketMajor、HK Ticketing、Cityline、NOL、Melon**：暂无稳定已授权售票数据接入，本项目仅抓公开新闻搜索线索并要求官方确认，不做登录、验证码绕过或高频爬取。
-- **X / 小红书**：仅提供检索入口，不自动采集点赞/转发、不能计算真实跨平台热度分数。可在后续添加授权 API 或合规数据供应商。
-- GitHub Pages 是静态站点；Actions 定时任务可能延迟，数据不实时，不能保证每天各平台均有新公告。
-- `generated_at` 是数据脚本执行时间，不等于各平台全部项目经过当天人工核实。
-
-本地预览：在本项目目录执行 `python -m http.server 8000`，浏览器打开 `http://localhost:8000/`。
+- **404**：确认 `index.html` 位于根目录，Pages 分支是 `main` / root。
+- **页面显示没有演出**：说明 `events` 中还没有符合严格条件且近期核实的活动；可查看待核实线索。
+- **所有平台显示抓取失败**：打开 Actions 日志查看 HTTP 错误，可能是网站防机器人、地域限制或网络问题；不表示无演出。
+- **更新后网页看不到新数据**：等待 GitHub Pages 重新部署并强制刷新。
+- **使用本地双击 `index.html` 失败**：推荐经 GitHub Pages 打开，或在项目文件夹运行 `python -m http.server 8000` 后访问 `http://localhost:8000`。
